@@ -40,7 +40,7 @@ jobs:
             PR_BRANCH=$(echo "$PR_JSON" | jq -r '.headRefName')
             PR_BODY=$(echo "$PR_JSON" | jq -r '.body')
 
-            echo "---"
+            echo "=========="
             echo "Processing PR #${PR_NUMBER}: ${PR_TITLE} (branch: ${PR_BRANCH})"
 
             # Force-push the branch to upstream
@@ -52,17 +52,15 @@ jobs:
 
             if [ -z "$EXISTING_PR" ] || [ "$EXISTING_PR" = "null" ]; then
               echo "Creating mirror PR in ${UPSTREAM_REPO}..."
-              MIRROR_BODY="Mirrored from ${DEV_REPO}#${PR_NUMBER}
-
----
-
-${PR_BODY}"
+              BODY_FILE=$(mktemp)
+              printf "Mirrored from %s#%s\n\n---\n\n%s" "$DEV_REPO" "$PR_NUMBER" "$PR_BODY" > "$BODY_FILE"
               gh pr create \
                 --repo "$UPSTREAM_REPO" \
                 --base staging \
                 --head "$PR_BRANCH" \
                 --title "$PR_TITLE" \
-                --body "$MIRROR_BODY"
+                --body-file "$BODY_FILE"
+              rm -f "$BODY_FILE"
               echo "Mirror PR created."
             else
               EXISTING_TITLE=$(echo "$EXISTING_PR" | jq -r '.title')
@@ -79,5 +77,5 @@ ${PR_BODY}"
             fi
           done
 
-          echo "---"
+          echo "=========="
           echo "All PRs processed."
