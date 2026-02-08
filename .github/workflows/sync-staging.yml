@@ -11,7 +11,7 @@ jobs:
     steps:
       - name: Sync staging from source to dev
         run: |
-          git clone --branch staging --single-branch https://github.com/axiononeproject/xcent-next.git repo
+          git clone --branch staging --single-branch https://x-access-token:${{ secrets.SYNC_PAT }}@github.com/axiononeproject/xcent-next.git repo
           cd repo
 
           # Check current commit
