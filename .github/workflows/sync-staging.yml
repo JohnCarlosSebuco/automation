@@ -1,0 +1,35 @@
+name: Sync Staging Branch
+
+on:
+  schedule:
+    - cron: '*/5 * * * *'
+  workflow_dispatch:
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Sync staging from source to dev
+        run: |
+          git clone --branch staging --single-branch https://github.com/axiononeproject/xcent-next.git repo
+          cd repo
+
+          # Check current commit
+          SOURCE_SHA=$(git rev-parse HEAD)
+          echo "Source staging SHA: $SOURCE_SHA"
+
+          # Set up push to dev repo using PAT
+          git remote add dev https://x-access-token:${{ secrets.SYNC_PAT }}@github.com/JohnCarlosSebuco/xcent-next-dev.git
+
+          # Fetch dev repo's staging to compare
+          git fetch dev staging || echo "Dev staging branch does not exist yet"
+          DEV_SHA=$(git rev-parse dev/staging 2>/dev/null || echo "none")
+          echo "Dev staging SHA: $DEV_SHA"
+
+          if [ "$SOURCE_SHA" = "$DEV_SHA" ]; then
+            echo "Already in sync. Nothing to do."
+          else
+            echo "Changes detected. Pushing source staging to dev repo..."
+            git push dev staging:staging --force
+            echo "Sync complete!"
+          fi
