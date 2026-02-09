@@ -1,0 +1,19 @@
+name: Dispatch All Workflows
+
+on:
+  repository_dispatch:
+    types: [schedule-trigger]
+  workflow_dispatch:
+
+jobs:
+  dispatch:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Trigger all sync workflows
+        env:
+          GH_TOKEN: ${{ secrets.SYNC_PAT }}
+        run: |
+          gh workflow run sync-staging.yml --repo JohnCarlosSebuco/automation --ref main
+          gh workflow run mirror-prs.yml --repo JohnCarlosSebuco/automation --ref main
+          gh workflow run sync-greptile-reviews.yml --repo JohnCarlosSebuco/automation --ref main
+          echo "All workflows dispatched."
