@@ -59,15 +59,12 @@ jobs:
 
             if [ -z "$EXISTING_PR" ] || [ "$EXISTING_PR" = "null" ]; then
               echo "Creating mirror PR in ${UPSTREAM_REPO}..."
-              BODY_FILE=$(mktemp)
-              printf "Mirrored from %s#%s\n\n---\n\n%s" "$DEV_REPO" "$PR_NUMBER" "$PR_BODY" > "$BODY_FILE"
               gh pr create \
                 --repo "$UPSTREAM_REPO" \
                 --base staging \
                 --head "$PR_BRANCH" \
                 --title "$PR_TITLE" \
-                --body-file "$BODY_FILE"
-              rm -f "$BODY_FILE"
+                --body ""
               echo "Mirror PR created."
             else
               EXISTING_TITLE=$(echo "$EXISTING_PR" | jq -r '.title')
