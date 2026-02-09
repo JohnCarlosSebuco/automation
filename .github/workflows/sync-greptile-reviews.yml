@@ -49,24 +49,26 @@ jobs:
 
             COMMENT_COUNT=$(echo "$COMMENTS" | jq 'length')
 
-            # Fetch greptile review bodies (Additional Comments)
-            REVIEWS=$(gh api "repos/${UPSTREAM_REPO}/pulls/${PR_NUMBER}/reviews" \
-              --jq "[.[] | select(.user.login == \"${BOT_LOGIN}\" and .body != null and .body != \"\")]")
+            # Fetch greptile issue comments (Additional Comments)
+            ISSUE_COMMENTS=$(gh api "repos/${UPSTREAM_REPO}/issues/${PR_NUMBER}/comments" \
+              --jq "[.[] | select(.user.login == \"${BOT_LOGIN}\")]")
 
             ADDITIONAL_BODY=""
-            while IFS= read -r review; do
-              REVIEW_BODY=$(echo "$review" | jq -r '.body')
-              # Strip metadata lines
-              CLEANED=$(echo "$REVIEW_BODY" | sed \
-                -e '/^[0-9]\+ files\? reviewed/d' \
-                -e '/^\*\*Additional Comments/d' \
-                -e '/^Prompt To Fix With AI$/d' \
-                -e '/^Edit Code Review Agent Settings/d' \
-                -e '/^$/d')
-              if [ -n "$CLEANED" ]; then
-                ADDITIONAL_BODY="$CLEANED"
+            while IFS= read -r ic; do
+              IC_BODY=$(echo "$ic" | jq -r '.body')
+              # Only process comments containing the Additional Comments header
+              if echo "$IC_BODY" | grep -q 'Additional Comments'; then
+                CLEANED=$(echo "$IC_BODY" | sed \
+                  -e '/files\? reviewed/d' \
+                  -e '/\*\*Additional Comments/d' \
+                  -e '/Prompt To Fix With AI/d' \
+                  -e '/Edit Code Review Agent Settings/d' \
+                  -e '/^$/d')
+                if [ -n "$CLEANED" ]; then
+                  ADDITIONAL_BODY="$CLEANED"
+                fi
               fi
-            done < <(echo "$REVIEWS" | jq -c '.[]')
+            done < <(echo "$ISSUE_COMMENTS" | jq -c '.[]')
 
             ADDITIONAL_COUNT=0
             if [ -n "$ADDITIONAL_BODY" ]; then
@@ -93,7 +95,7 @@ jobs:
               START_LINE=$(echo "$comment" | jq -r '.start_line')
               END_LINE=$(echo "$comment" | jq -r '.line')
               COMMENT_BODY=$(echo "$comment" | jq -r '.body')
-              COMMENT_BODY=$(echo "$COMMENT_BODY" | sed '/^Prompt To Fix With AI$/d')
+              COMMENT_BODY=$(echo "$COMMENT_BODY" | sed '/Prompt To Fix With AI/d')
 
               if [ "$START_LINE" != "null" ] && [ "$START_LINE" != "$END_LINE" ]; then
                 HEADER="\`${FILE_PATH}\` (lines ${START_LINE}-${END_LINE})"
