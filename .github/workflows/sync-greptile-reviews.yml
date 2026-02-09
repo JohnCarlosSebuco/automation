@@ -59,12 +59,7 @@ jobs:
               # Only process comments containing the Additional Comments header
               if echo "$IC_BODY" | grep -q 'Additional Comments'; then
                 CLEANED=$(echo "$IC_BODY" | sed \
-                  -e '/^`\{3,\}markdown/,/^`\{3,\}$/d' \
-                  -e '/files\? reviewed/d' \
-                  -e '/\*\*Additional Comments/d' \
-                  -e '/Prompt To Fix With AI/d' \
-                  -e '/Edit Code Review Agent Settings/d' \
-                  -e '/^$/d')
+                  -e '/Edit Code Review Agent Settings/d')
                 if [ -n "$CLEANED" ]; then
                   ADDITIONAL_BODY="$CLEANED"
                 fi
