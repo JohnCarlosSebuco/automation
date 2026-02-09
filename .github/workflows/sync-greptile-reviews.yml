@@ -19,7 +19,7 @@ jobs:
           BOT_LOGIN="greptile-apps[bot]"
 
           # List open PRs targeting staging authored by JohnCarlosSebuco
-          PRS=$(gh pr list --repo "$UPSTREAM_REPO" --base staging --state open --author "$AUTHOR" --json number,headRefName,url --jq '.[] | @base64')
+          PRS=$(gh pr list --repo "$UPSTREAM_REPO" --base staging --state open --author "$AUTHOR" --json number,headRefName --jq '.[] | @base64')
 
           if [ -z "$PRS" ]; then
             echo "No open PRs targeting staging by ${AUTHOR}. Nothing to do."
@@ -30,7 +30,6 @@ jobs:
             PR_JSON=$(echo "$PR_B64" | base64 --decode)
             PR_NUMBER=$(echo "$PR_JSON" | jq -r '.number')
             PR_BRANCH=$(echo "$PR_JSON" | jq -r '.headRefName')
-            PR_URL=$(echo "$PR_JSON" | jq -r '.url')
 
             echo "=========="
             echo "Processing PR #${PR_NUMBER} (branch: ${PR_BRANCH})"
@@ -45,59 +44,58 @@ jobs:
               continue
             fi
 
-            # Fetch greptile review summaries
-            REVIEWS=$(gh api "repos/${UPSTREAM_REPO}/pulls/${PR_NUMBER}/reviews" --jq "[.[] | select(.user.login == \"${BOT_LOGIN}\")] | map({body: .body})")
-
             # Fetch greptile inline comments
             COMMENTS=$(gh api "repos/${UPSTREAM_REPO}/pulls/${PR_NUMBER}/comments" --jq "[.[] | select(.user.login == \"${BOT_LOGIN}\")] | map({path: .path, start_line: .start_line, line: .line, body: .body})")
 
-            REVIEW_COUNT=$(echo "$REVIEWS" | jq 'length')
             COMMENT_COUNT=$(echo "$COMMENTS" | jq 'length')
 
-            if [ "$REVIEW_COUNT" -eq 0 ] && [ "$COMMENT_COUNT" -eq 0 ]; then
-              echo "No greptile comments on PR #${PR_NUMBER}. Skipping."
+            if [ "$COMMENT_COUNT" -eq 0 ]; then
+              echo "No greptile inline comments on PR #${PR_NUMBER}. Skipping."
               continue
             fi
 
-            echo "Found ${REVIEW_COUNT} review(s) and ${COMMENT_COUNT} inline comment(s) from greptile."
+            echo "Found ${COMMENT_COUNT} inline comment(s) from greptile."
 
-            # Build the issue body
-            BODY_FILE=$(mktemp)
+            # Create the issue with empty body
+            ISSUE_URL=$(gh issue create --repo "$DEV_REPO" --title "$ISSUE_TITLE" --body "")
+            ISSUE_NUMBER=$(echo "$ISSUE_URL" | grep -o '[0-9]*$')
+            echo "Created issue #${ISSUE_NUMBER}: ${ISSUE_TITLE}"
 
-            printf '> Greptile review for [PR #%s](%s) on `%s`\n\n' "$PR_NUMBER" "$PR_URL" "$UPSTREAM_REPO" > "$BODY_FILE"
+            # Post each inline comment as a separate issue comment
+            POSTED=0
+            while IFS= read -r comment; do
+              FILE_PATH=$(echo "$comment" | jq -r '.path')
+              START_LINE=$(echo "$comment" | jq -r '.start_line')
+              END_LINE=$(echo "$comment" | jq -r '.line')
+              COMMENT_BODY=$(echo "$comment" | jq -r '.body')
 
-            # Add review summaries
-            if [ "$REVIEW_COUNT" -gt 0 ]; then
-              printf '## Review Summary\n\n' >> "$BODY_FILE"
-              echo "$REVIEWS" | jq -r '.[].body' | while IFS= read -r line; do
-                printf '%s\n' "$line" >> "$BODY_FILE"
-              done
-              printf '\n' >> "$BODY_FILE"
-            fi
+              if [ "$START_LINE" != "null" ] && [ "$START_LINE" != "$END_LINE" ]; then
+                HEADER="\`${FILE_PATH}\` (lines ${START_LINE}-${END_LINE})"
+              else
+                HEADER="\`${FILE_PATH}\` (line ${END_LINE})"
+              fi
 
-            # Add inline comments
-            if [ "$COMMENT_COUNT" -gt 0 ]; then
-              printf '## Inline Comments\n\n' >> "$BODY_FILE"
-              echo "$COMMENTS" | jq -c '.[]' | while IFS= read -r comment; do
-                FILE_PATH=$(echo "$comment" | jq -r '.path')
-                START_LINE=$(echo "$comment" | jq -r '.start_line')
-                END_LINE=$(echo "$comment" | jq -r '.line')
-                COMMENT_BODY=$(echo "$comment" | jq -r '.body')
+              COMMENT_FILE=$(mktemp)
+              printf '%s\n\n%s\n' "$HEADER" "$COMMENT_BODY" > "$COMMENT_FILE"
 
-                if [ "$START_LINE" != "null" ] && [ "$START_LINE" != "$END_LINE" ]; then
-                  printf '### `%s` (lines %s-%s)\n\n' "$FILE_PATH" "$START_LINE" "$END_LINE" >> "$BODY_FILE"
-                else
-                  printf '### `%s` (line %s)\n\n' "$FILE_PATH" "$END_LINE" >> "$BODY_FILE"
+              # Retry up to 3 times per comment
+              for ATTEMPT in 1 2 3; do
+                if gh issue comment "$ISSUE_NUMBER" --repo "$DEV_REPO" --body-file "$COMMENT_FILE"; then
+                  POSTED=$((POSTED + 1))
+                  break
                 fi
-
-                printf '%s\n\n' "$COMMENT_BODY" >> "$BODY_FILE"
+                echo "Retry ${ATTEMPT}/3 for comment on ${FILE_PATH}..."
+                sleep $((ATTEMPT * 2))
               done
-            fi
 
-            # Create the issue
-            gh issue create --repo "$DEV_REPO" --title "$ISSUE_TITLE" --body-file "$BODY_FILE"
-            rm -f "$BODY_FILE"
-            echo "Created issue: ${ISSUE_TITLE}"
+              rm -f "$COMMENT_FILE"
+              sleep 1
+            done < <(echo "$COMMENTS" | jq -c '.[]')
+
+            echo "Posted ${POSTED}/${COMMENT_COUNT} comments to issue #${ISSUE_NUMBER}."
+            if [ "$POSTED" -ne "$COMMENT_COUNT" ]; then
+              echo "::warning::Only posted ${POSTED} of ${COMMENT_COUNT} comments for PR #${PR_NUMBER}."
+            fi
           done
 
           echo "=========="
