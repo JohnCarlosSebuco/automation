@@ -91,8 +91,6 @@ jobs:
               START_LINE=$(echo "$comment" | jq -r '.start_line')
               END_LINE=$(echo "$comment" | jq -r '.line')
               COMMENT_BODY=$(echo "$comment" | jq -r '.body')
-              # Strip the duplicate "This is a comment left during a code review" block
-              COMMENT_BODY=$(echo "$COMMENT_BODY" | sed '/This is a comment left during a code review/,/How can I resolve this/d')
 
               if [ "$START_LINE" != "null" ] && [ "$START_LINE" != "$END_LINE" ]; then
                 HEADER="\`${FILE_PATH}\` (lines ${START_LINE}-${END_LINE})"
