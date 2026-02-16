@@ -74,29 +74,62 @@ for PR_B64 in $PRS; do
     fi
   done < <(echo "$ALL_ISSUES" | jq -c '.')
 
+  # Extract last sync timestamp from metadata
+  LATEST_SYNCED_AT=""
   if [ "$HIGHEST_VERSION" -gt 0 ]; then
     echo "Found existing version ${HIGHEST_VERSION} (issue #${LATEST_ISSUE_NUMBER}, ${LATEST_ISSUE_STATE})"
     echo "Previous content hash: ${LATEST_CONTENT_HASH}"
+
+    # Get the timestamp of the last sync
+    ISSUE_BODY=$(gh api "repos/${DEV_REPO}/issues/${LATEST_ISSUE_NUMBER}" --jq '.body // ""')
+    LATEST_SYNCED_AT=$(extract_metadata "$ISSUE_BODY" "SYNCED_AT")
+
+    if [ -n "$LATEST_SYNCED_AT" ]; then
+      echo "Last synced at: ${LATEST_SYNCED_AT}"
+    fi
   else
     echo "No existing versions found for branch ${PR_BRANCH}"
   fi
 
-  # Fetch greptile inline comments
-  COMMENTS=$(gh api "repos/${UPSTREAM_REPO}/pulls/${PR_NUMBER}/comments" --jq "[.[] | select(.user.login == \"${BOT_LOGIN}\")] | map({path: .path, start_line: .start_line, line: .line, body: .body})")
+  # Fetch ALL greptile inline comments (for hash calculation)
+  ALL_COMMENTS=$(gh api "repos/${UPSTREAM_REPO}/pulls/${PR_NUMBER}/comments" --jq "[.[] | select(.user.login == \"${BOT_LOGIN}\")] | map({path: .path, start_line: .start_line, line: .line, body: .body})")
+
+  # Fetch ALL greptile issue comments (for hash calculation)
+  ALL_ISSUE_COMMENTS=$(gh api "repos/${UPSTREAM_REPO}/issues/${PR_NUMBER}/comments" \
+    --jq "[.[] | select(.user.login == \"${BOT_LOGIN}\")]")
+
+  # Filter for NEW comments only (for display)
+  if [ -n "$LATEST_SYNCED_AT" ]; then
+    echo "Filtering comments created after ${LATEST_SYNCED_AT}"
+    COMMENTS=$(gh api "repos/${UPSTREAM_REPO}/pulls/${PR_NUMBER}/comments" --jq "[.[] | select(.user.login == \"${BOT_LOGIN}\" and .created_at > \"${LATEST_SYNCED_AT}\")] | map({path: .path, start_line: .start_line, line: .line, body: .body})")
+    ISSUE_COMMENTS=$(gh api "repos/${UPSTREAM_REPO}/issues/${PR_NUMBER}/comments" \
+      --jq "[.[] | select(.user.login == \"${BOT_LOGIN}\" and .created_at > \"${LATEST_SYNCED_AT}\")]")
+  else
+    # First version: use all comments for both hash and display
+    COMMENTS="$ALL_COMMENTS"
+    ISSUE_COMMENTS="$ALL_ISSUE_COMMENTS"
+  fi
 
   COMMENT_COUNT=$(echo "$COMMENTS" | jq 'length')
 
-  # Fetch greptile issue comments (Additional Comments)
-  ISSUE_COMMENTS=$(gh api "repos/${UPSTREAM_REPO}/issues/${PR_NUMBER}/comments" \
-    --jq "[.[] | select(.user.login == \"${BOT_LOGIN}\")]")
+  # Process ALL issue comments for hash calculation
+  ALL_ADDITIONAL_BODY=""
+  while IFS= read -r ic; do
+    IC_BODY=$(echo "$ic" | jq -r '.body')
+    if echo "$IC_BODY" | grep -q 'Additional Comments'; then
+      CLEANED=$(echo "$IC_BODY" | sed -e '/Edit Code Review Agent Settings/d')
+      if [ -n "$CLEANED" ]; then
+        ALL_ADDITIONAL_BODY="$CLEANED"
+      fi
+    fi
+  done < <(echo "$ALL_ISSUE_COMMENTS" | jq -c '.[]')
 
+  # Process NEW issue comments for display
   ADDITIONAL_BODY=""
   while IFS= read -r ic; do
     IC_BODY=$(echo "$ic" | jq -r '.body')
-    # Only process comments containing the Additional Comments header
     if echo "$IC_BODY" | grep -q 'Additional Comments'; then
-      CLEANED=$(echo "$IC_BODY" | sed \
-        -e '/Edit Code Review Agent Settings/d')
+      CLEANED=$(echo "$IC_BODY" | sed -e '/Edit Code Review Agent Settings/d')
       if [ -n "$CLEANED" ]; then
         ADDITIONAL_BODY="$CLEANED"
       fi
@@ -109,16 +142,23 @@ for PR_B64 in $PRS; do
   fi
   TOTAL_COUNT=$((COMMENT_COUNT + ADDITIONAL_COUNT))
 
-  if [ "$TOTAL_COUNT" -eq 0 ]; then
-    echo "No greptile comments on PR #${PR_NUMBER}. Skipping."
+  # Calculate content hash using ALL comments (for change detection)
+  CURRENT_HASH=$(calculate_content_hash "$ALL_COMMENTS" "$ALL_ADDITIONAL_BODY")
+  echo "Current content hash: ${CURRENT_HASH}"
+
+  # Check if total state changed
+  if [ -n "$LATEST_CONTENT_HASH" ] && [ "$CURRENT_HASH" = "$LATEST_CONTENT_HASH" ]; then
+    echo "Content unchanged from version ${HIGHEST_VERSION}. Skipping."
     continue
   fi
 
-  echo "Found ${COMMENT_COUNT} inline + ${ADDITIONAL_COUNT} additional = ${TOTAL_COUNT} total comment(s)."
+  # Check if there are any NEW comments to display
+  if [ "$TOTAL_COUNT" -eq 0 ]; then
+    echo "No new greptile comments since last sync. Skipping."
+    continue
+  fi
 
-  # Calculate content hash of current greptile comments
-  CURRENT_HASH=$(calculate_content_hash "$COMMENTS" "$ADDITIONAL_BODY")
-  echo "Current content hash: ${CURRENT_HASH}"
+  echo "Found ${COMMENT_COUNT} new inline + ${ADDITIONAL_COUNT} new additional = ${TOTAL_COUNT} total new comment(s)."
 
   # Change detection: compare with latest version
   if [ -n "$LATEST_CONTENT_HASH" ] && [ "$CURRENT_HASH" = "$LATEST_CONTENT_HASH" ]; then
