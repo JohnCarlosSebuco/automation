@@ -18,28 +18,6 @@ jobs:
           AUTHOR="JohnCarlosSebuco"
           BOT_LOGIN="greptile-apps[bot]"
 
-          # Helper function: Calculate SHA-256 hash of greptile comment content
-          calculate_content_hash() {
-            local inline_comments="$1"
-            local additional_body="$2"
-
-            # Sort inline comments deterministically by path, then line
-            local sorted_inline=$(echo "$inline_comments" | jq -S 'sort_by(.path, .line)')
-
-            # Concatenate all content and hash
-            local combined="${sorted_inline}${additional_body}"
-            echo -n "$combined" | sha256sum | awk '{print $1}'
-          }
-
-          # Helper function: Extract metadata value from HTML comment
-          extract_metadata() {
-            local issue_body="$1"
-            local key="$2"
-
-            # Extract value from "KEY: value" pattern in metadata block
-            echo "$issue_body" | grep -oP "(?<=^${key}: ).*$" || echo ""
-          }
-
           # List open PRs targeting staging authored by JohnCarlosSebuco
           PRS=$(gh pr list --repo "$UPSTREAM_REPO" --base staging --state open --author "$AUTHOR" --json number,headRefName --jq '.[] | @base64')
 
@@ -56,41 +34,14 @@ jobs:
             echo "=========="
             echo "Processing PR #${PR_NUMBER} (branch: ${PR_BRANCH})"
 
-            # Version detection: find all "Code Review * - {branch}" issues
-            SEARCH_PATTERN="Code Review"
-            ALL_ISSUES=$(gh issue list --repo "$DEV_REPO" --state all --search "\"${SEARCH_PATTERN}\" in:title ${PR_BRANCH}" --json number,title,state,body --jq '.[]')
+            # Dedup check: search for existing issue in dev repo (open OR closed)
+            ISSUE_TITLE="Code Review - ${PR_BRANCH}"
+            OPEN_MATCH=$(gh issue list --repo "$DEV_REPO" --state open --search "\"${ISSUE_TITLE}\" in:title" --json number,title --jq "[.[] | select(.title == \"${ISSUE_TITLE}\")] | length")
+            CLOSED_MATCH=$(gh issue list --repo "$DEV_REPO" --state closed --search "\"${ISSUE_TITLE}\" in:title" --json number,title --jq "[.[] | select(.title == \"${ISSUE_TITLE}\")] | length")
 
-            HIGHEST_VERSION=0
-            LATEST_CONTENT_HASH=""
-            LATEST_ISSUE_NUMBER=""
-            LATEST_ISSUE_STATE=""
-
-            while IFS= read -r issue; do
-              ISSUE_TITLE_FOUND=$(echo "$issue" | jq -r '.title')
-              ISSUE_NUMBER_FOUND=$(echo "$issue" | jq -r '.number')
-              ISSUE_STATE_FOUND=$(echo "$issue" | jq -r '.state')
-              ISSUE_BODY_FOUND=$(echo "$issue" | jq -r '.body // ""')
-
-              # Match pattern: "Code Review {version} - {branch}"
-              if [[ "$ISSUE_TITLE_FOUND" =~ ^Code\ Review\ ([0-9]+)\ -\ ${PR_BRANCH}$ ]]; then
-                VERSION_NUM="${BASH_REMATCH[1]}"
-
-                if [ "$VERSION_NUM" -gt "$HIGHEST_VERSION" ]; then
-                  HIGHEST_VERSION="$VERSION_NUM"
-                  LATEST_ISSUE_NUMBER="$ISSUE_NUMBER_FOUND"
-                  LATEST_ISSUE_STATE="$ISSUE_STATE_FOUND"
-
-                  # Extract content hash from metadata
-                  LATEST_CONTENT_HASH=$(extract_metadata "$ISSUE_BODY_FOUND" "CONTENT_HASH")
-                fi
-              fi
-            done < <(echo "$ALL_ISSUES" | jq -c '.')
-
-            if [ "$HIGHEST_VERSION" -gt 0 ]; then
-              echo "Found existing version ${HIGHEST_VERSION} (issue #${LATEST_ISSUE_NUMBER}, ${LATEST_ISSUE_STATE})"
-              echo "Previous content hash: ${LATEST_CONTENT_HASH}"
-            else
-              echo "No existing versions found for branch ${PR_BRANCH}"
+            if [ "$OPEN_MATCH" -gt 0 ] || [ "$CLOSED_MATCH" -gt 0 ]; then
+              echo "Issue already exists for '${ISSUE_TITLE}'. Skipping."
+              continue
             fi
 
             # Fetch greptile inline comments
@@ -128,44 +79,9 @@ jobs:
 
             echo "Found ${COMMENT_COUNT} inline + ${ADDITIONAL_COUNT} additional = ${TOTAL_COUNT} total comment(s)."
 
-            # Calculate content hash of current greptile comments
-            CURRENT_HASH=$(calculate_content_hash "$COMMENTS" "$ADDITIONAL_BODY")
-            echo "Current content hash: ${CURRENT_HASH}"
-
-            # Change detection: compare with latest version
-            if [ -n "$LATEST_CONTENT_HASH" ] && [ "$CURRENT_HASH" = "$LATEST_CONTENT_HASH" ]; then
-              echo "Content unchanged from version ${HIGHEST_VERSION}. Skipping."
-              continue
-            fi
-
-            # Calculate next version number
-            NEXT_VERSION=$((HIGHEST_VERSION + 1))
-            ISSUE_TITLE="Code Review ${NEXT_VERSION} - ${PR_BRANCH}"
-
-            if [ "$HIGHEST_VERSION" -gt 0 ]; then
-              echo "Creating new version ${NEXT_VERSION} (previous: #${LATEST_ISSUE_NUMBER}, ${LATEST_ISSUE_STATE})"
-            else
-              echo "Creating first version for branch ${PR_BRANCH}"
-            fi
-
-            # Generate metadata block
-            SYNCED_AT=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
-            METADATA="<!-- GREPTILE_METADATA
-PR_NUMBER: ${PR_NUMBER}
-CONTENT_HASH: ${CURRENT_HASH}
-INLINE_COMMENTS: ${COMMENT_COUNT}
-ADDITIONAL_COMMENTS: ${ADDITIONAL_COUNT}
-TOTAL_COMMENTS: ${TOTAL_COUNT}
-SYNCED_AT: ${SYNCED_AT}
-VERSION: ${NEXT_VERSION}
--->"
-
-            # Create the issue with metadata
-            METADATA_FILE=$(mktemp)
-            printf '%s\n' "$METADATA" > "$METADATA_FILE"
-            ISSUE_URL=$(gh issue create --repo "$DEV_REPO" --title "$ISSUE_TITLE" --body-file "$METADATA_FILE")
+            # Create the issue with empty body
+            ISSUE_URL=$(gh issue create --repo "$DEV_REPO" --title "$ISSUE_TITLE" --body "")
             ISSUE_NUMBER=$(echo "$ISSUE_URL" | grep -o '[0-9]*$')
-            rm -f "$METADATA_FILE"
             echo "Created issue #${ISSUE_NUMBER}: ${ISSUE_TITLE}"
 
             # Post each inline comment as a separate issue comment
