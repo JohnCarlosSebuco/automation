@@ -2,7 +2,6 @@ name: Sync Greptile Reviews
 
 on:
   workflow_dispatch:
-    inputs: {}
 
 jobs:
   sync-reviews:
