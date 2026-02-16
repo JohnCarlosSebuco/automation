@@ -18,4 +18,26 @@ jobs:
           AUTHOR="JohnCarlosSebuco"
           BOT_LOGIN="greptile-apps[bot]"
 
+          # Helper function: Calculate SHA-256 hash of greptile comment content
+          calculate_content_hash() {
+            local inline_comments="$1"
+            local additional_body="$2"
+
+            # Sort inline comments deterministically by path, then line
+            local sorted_inline=$(echo "$inline_comments" | jq -S 'sort_by(.path, .line)')
+
+            # Concatenate all content and hash
+            local combined="${sorted_inline}${additional_body}"
+            echo -n "$combined" | sha256sum | awk '{print $1}'
+          }
+
+          # Helper function: Extract metadata value from HTML comment
+          extract_metadata() {
+            local issue_body="$1"
+            local key="$2"
+
+            # Extract value from "KEY: value" pattern in metadata block
+            echo "$issue_body" | grep -oP "(?<=^${key}: ).*$" || echo ""
+          }
+
           echo "Test"
