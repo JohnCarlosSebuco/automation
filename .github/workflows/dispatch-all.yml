@@ -15,5 +15,5 @@ jobs:
         run: |
           gh workflow run sync-staging.yml --repo JohnCarlosSebuco/automation --ref main
           gh workflow run mirror-prs.yml --repo JohnCarlosSebuco/automation --ref main
-          gh workflow run sync-greptile-reviews-v2.yml --repo JohnCarlosSebuco/automation --ref main
+          gh workflow run sync-greptile-reviews.yml --repo JohnCarlosSebuco/automation --ref main
           echo "All workflows dispatched."
