@@ -11,4 +11,11 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.SYNC_PAT }}
         run: |
+          set -euo pipefail
+
+          UPSTREAM_REPO="axiononeproject/xcent-next"
+          DEV_REPO="JohnCarlosSebuco/xcent-next-dev"
+          AUTHOR="JohnCarlosSebuco"
+          BOT_LOGIN="greptile-apps[bot]"
+
           echo "Test"
