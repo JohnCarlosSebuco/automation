@@ -25,7 +25,7 @@ extract_metadata() {
   local key="$2"
 
   # Extract value from "KEY: value" pattern in metadata block
-  echo "$issue_body" | grep -oP "(?<=^${key}: ).*$" || echo ""
+  echo "$issue_body" | tr -d '\r' | grep -oP "(?<=^${key}: )[^\r]*" || echo ""
 }
 
 # List open PRs targeting staging authored by JohnCarlosSebuco
@@ -46,7 +46,7 @@ for PR_B64 in $PRS; do
 
   # Version detection: find all "Code Review * - {branch}" issues
   SEARCH_PATTERN="Code Review"
-  ALL_ISSUES=$(gh issue list --repo "$DEV_REPO" --state all --search "\"${SEARCH_PATTERN}\" in:title ${PR_BRANCH}" --json number,title,state,body --jq '.[]')
+  ALL_ISSUES=$(gh issue list --repo "$DEV_REPO" --state all --limit 100 --search "\"${SEARCH_PATTERN}\" in:title ${PR_BRANCH}" --json number,title,state,body --jq '.[]')
 
   HIGHEST_VERSION=0
   LATEST_CONTENT_HASH=""
@@ -80,9 +80,10 @@ for PR_B64 in $PRS; do
     echo "Found existing version ${HIGHEST_VERSION} (issue #${LATEST_ISSUE_NUMBER}, ${LATEST_ISSUE_STATE})"
     echo "Previous content hash: ${LATEST_CONTENT_HASH}"
 
-    # Get the timestamp of the last sync
+    # Get the timestamp of the last sync and content hash from full API body (not truncated search result)
     ISSUE_BODY=$(gh api "repos/${DEV_REPO}/issues/${LATEST_ISSUE_NUMBER}" --jq '.body // ""')
     LATEST_SYNCED_AT=$(extract_metadata "$ISSUE_BODY" "SYNCED_AT")
+    LATEST_CONTENT_HASH=$(extract_metadata "$ISSUE_BODY" "CONTENT_HASH")
 
     if [ -n "$LATEST_SYNCED_AT" ]; then
       echo "Last synced at: ${LATEST_SYNCED_AT}"
@@ -159,12 +160,6 @@ for PR_B64 in $PRS; do
   fi
 
   echo "Found ${COMMENT_COUNT} new inline + ${ADDITIONAL_COUNT} new additional = ${TOTAL_COUNT} total new comment(s)."
-
-  # Change detection: compare with latest version
-  if [ -n "$LATEST_CONTENT_HASH" ] && [ "$CURRENT_HASH" = "$LATEST_CONTENT_HASH" ]; then
-    echo "Content unchanged from version ${HIGHEST_VERSION}. Skipping."
-    continue
-  fi
 
   # Calculate next version number
   NEXT_VERSION=$((HIGHEST_VERSION + 1))
