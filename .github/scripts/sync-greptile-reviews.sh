@@ -92,19 +92,22 @@ for PR_B64 in $PRS; do
     echo "No existing versions found for branch ${PR_BRANCH}"
   fi
 
-  # Fetch ALL greptile inline comments (for hash calculation)
-  ALL_COMMENTS=$(gh api "repos/${UPSTREAM_REPO}/pulls/${PR_NUMBER}/comments" --jq "[.[] | select(.user.login == \"${BOT_LOGIN}\")] | map({path: .path, start_line: .start_line, line: .line, body: .body})")
+  # Fetch ALL greptile inline comments with pagination (avoids 30-item default page limit)
+  ALL_COMMENTS_RAW=$(gh api "repos/${UPSTREAM_REPO}/pulls/${PR_NUMBER}/comments" --paginate \
+    | jq -s "add // [] | [.[] | select(.user.login == \"${BOT_LOGIN}\")]")
+  ALL_COMMENTS=$(echo "$ALL_COMMENTS_RAW" | jq 'map({path: .path, start_line: .start_line, line: .line, body: .body})')
 
-  # Fetch ALL greptile issue comments (for hash calculation)
-  ALL_ISSUE_COMMENTS=$(gh api "repos/${UPSTREAM_REPO}/issues/${PR_NUMBER}/comments" \
-    --jq "[.[] | select(.user.login == \"${BOT_LOGIN}\")]")
+  # Fetch ALL greptile issue comments with pagination
+  ALL_ISSUE_COMMENTS=$(gh api "repos/${UPSTREAM_REPO}/issues/${PR_NUMBER}/comments" --paginate \
+    | jq -s "add // [] | [.[] | select(.user.login == \"${BOT_LOGIN}\")]")
 
-  # Filter for NEW comments only (for display)
+  # Filter for NEW comments only (for display), derived from already-fetched data
   if [ -n "$LATEST_SYNCED_AT" ]; then
     echo "Filtering comments created after ${LATEST_SYNCED_AT}"
-    COMMENTS=$(gh api "repos/${UPSTREAM_REPO}/pulls/${PR_NUMBER}/comments" --jq "[.[] | select(.user.login == \"${BOT_LOGIN}\" and .created_at > \"${LATEST_SYNCED_AT}\")] | map({path: .path, start_line: .start_line, line: .line, body: .body})")
-    ISSUE_COMMENTS=$(gh api "repos/${UPSTREAM_REPO}/issues/${PR_NUMBER}/comments" \
-      --jq "[.[] | select(.user.login == \"${BOT_LOGIN}\" and .created_at > \"${LATEST_SYNCED_AT}\")]")
+    COMMENTS=$(echo "$ALL_COMMENTS_RAW" | jq --arg ts "$LATEST_SYNCED_AT" \
+      '[.[] | select(.created_at > $ts) | {path: .path, start_line: .start_line, line: .line, body: .body}]')
+    ISSUE_COMMENTS=$(echo "$ALL_ISSUE_COMMENTS" | jq --arg ts "$LATEST_SYNCED_AT" \
+      '[.[] | select(.created_at > $ts)]')
   else
     # First version: use all comments for both hash and display
     COMMENTS="$ALL_COMMENTS"
