@@ -28,11 +28,17 @@ extract_metadata() {
   echo "$issue_body" | tr -d '\r' | grep -oP "(?<=^${key}: )[^\r]*" || echo ""
 }
 
-# List open PRs targeting staging authored by JohnCarlosSebuco
-PRS=$(gh pr list --repo "$UPSTREAM_REPO" --base staging --state open --author "$AUTHOR" --json number,headRefName --jq '.[] | @base64')
+# List open PRs targeting staging or main authored by JohnCarlosSebuco
+PRS_STAGING=$(gh pr list --repo "$UPSTREAM_REPO" --base staging --state open --author "$AUTHOR" \
+  --json number,headRefName,baseRefName --jq '.[] | @base64' 2>/dev/null || echo "")
+
+PRS_MAIN=$(gh pr list --repo "$UPSTREAM_REPO" --base main --state open --author "$AUTHOR" \
+  --json number,headRefName,baseRefName --jq '.[] | @base64' 2>/dev/null || echo "")
+
+PRS=$(printf '%s\n%s' "$PRS_STAGING" "$PRS_MAIN" | grep -v '^$' || true)
 
 if [ -z "$PRS" ]; then
-  echo "No open PRs targeting staging by ${AUTHOR}. Nothing to do."
+  echo "No open PRs targeting staging or main by ${AUTHOR}. Nothing to do."
   exit 0
 fi
 
@@ -40,9 +46,10 @@ for PR_B64 in $PRS; do
   PR_JSON=$(echo "$PR_B64" | base64 --decode)
   PR_NUMBER=$(echo "$PR_JSON" | jq -r '.number')
   PR_BRANCH=$(echo "$PR_JSON" | jq -r '.headRefName')
+  PR_BASE=$(echo "$PR_JSON" | jq -r '.baseRefName')
 
   echo "=========="
-  echo "Processing PR #${PR_NUMBER} (branch: ${PR_BRANCH})"
+  echo "Processing PR #${PR_NUMBER} (branch: ${PR_BRANCH} → ${PR_BASE})"
 
   # Version detection: find all "Code Review * - {branch}" issues
   SEARCH_PATTERN="Code Review"
