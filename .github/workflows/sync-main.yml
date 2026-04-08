@@ -1,0 +1,33 @@
+name: Sync Main Branch
+
+on:
+  workflow_dispatch:
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Sync main from source to dev
+        run: |
+          git clone --branch main --single-branch https://x-access-token:${{ secrets.SYNC_PAT }}@github.com/axiononeproject/xcent-next.git repo
+          cd repo
+
+          # Check current commit
+          SOURCE_SHA=$(git rev-parse HEAD)
+          echo "Source main SHA: $SOURCE_SHA"
+
+          # Set up push to dev repo using PAT
+          git remote add dev https://x-access-token:${{ secrets.SYNC_PAT }}@github.com/JohnCarlosSebuco/xcent-next-dev.git
+
+          # Fetch dev repo's main to compare
+          git fetch dev main || echo "Dev main branch does not exist yet"
+          DEV_SHA=$(git rev-parse dev/main 2>/dev/null || echo "none")
+          echo "Dev main SHA: $DEV_SHA"
+
+          if [ "$SOURCE_SHA" = "$DEV_SHA" ]; then
+            echo "Already in sync. Nothing to do."
+          else
+            echo "Changes detected. Pushing source main to dev repo..."
+            git push dev main:main --force
+            echo "Sync complete!"
+          fi
