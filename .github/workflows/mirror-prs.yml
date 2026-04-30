@@ -16,11 +16,16 @@ jobs:
           DEV_REPO="JohnCarlosSebuco/xcent-next-dev"
           UPSTREAM_REPO="axiononeproject/xcent-next"
 
-          # Get all open PRs targeting staging in the dev repo
-          PRS=$(gh pr list --repo "$DEV_REPO" --base staging --state open --json number,title,headRefName,body --jq '.[] | @base64')
+          # Get all open PRs targeting staging or main in the dev repo, tagged with base branch
+          STAGING_PRS=$(gh pr list --repo "$DEV_REPO" --base staging --state open --json number,title,headRefName,body \
+            --jq '.[] | . + {base: "staging"} | @base64')
+          MAIN_PRS=$(gh pr list --repo "$DEV_REPO" --base main --state open --json number,title,headRefName,body \
+            --jq '.[] | . + {base: "main"} | @base64')
+          PRS="${STAGING_PRS} ${MAIN_PRS}"
+          PRS=$(echo "$PRS" | xargs)
 
           if [ -z "$PRS" ]; then
-            echo "No open PRs targeting staging. Nothing to do."
+            echo "No open PRs targeting staging or main. Nothing to do."
             exit 0
           fi
 
@@ -37,19 +42,20 @@ jobs:
             PR_TITLE=$(echo "$PR_JSON" | jq -r '.title')
             PR_BRANCH=$(echo "$PR_JSON" | jq -r '.headRefName')
             PR_BODY=$(echo "$PR_JSON" | jq -r '.body')
+            PR_BASE=$(echo "$PR_JSON" | jq -r '.base')
 
             echo "=========="
-            echo "Processing PR #${PR_NUMBER}: ${PR_TITLE} (branch: ${PR_BRANCH})"
+            echo "Processing PR #${PR_NUMBER}: ${PR_TITLE} (branch: ${PR_BRANCH} → ${PR_BASE})"
 
             # Check if this branch already has a merged PR in upstream (skip if so)
-            MERGED_PR=$(gh pr list --repo "$UPSTREAM_REPO" --head "$PR_BRANCH" --base staging --state merged --json number --jq '.[0].number' 2>/dev/null || echo "")
+            MERGED_PR=$(gh pr list --repo "$UPSTREAM_REPO" --head "$PR_BRANCH" --base "$PR_BASE" --state merged --json number --jq '.[0].number' 2>/dev/null || echo "")
             if [ -n "$MERGED_PR" ] && [ "$MERGED_PR" != "null" ]; then
               echo "Skipping: mirror PR #${MERGED_PR} was already merged in ${UPSTREAM_REPO}."
               continue
             fi
 
             # Check if a mirror PR already exists (open) in upstream with the same branch
-            EXISTING_PR=$(gh pr list --repo "$UPSTREAM_REPO" --head "$PR_BRANCH" --base staging --state open --json number,title --jq '.[0]' 2>/dev/null || echo "")
+            EXISTING_PR=$(gh pr list --repo "$UPSTREAM_REPO" --head "$PR_BRANCH" --base "$PR_BASE" --state open --json number,title --jq '.[0]' 2>/dev/null || echo "")
 
             # Force-push the branch to upstream
             echo "Pushing ${PR_BRANCH} to ${UPSTREAM_REPO}..."
@@ -59,7 +65,7 @@ jobs:
               echo "Creating mirror PR in ${UPSTREAM_REPO}..."
               gh pr create \
                 --repo "$UPSTREAM_REPO" \
-                --base staging \
+                --base "$PR_BASE" \
                 --head "$PR_BRANCH" \
                 --title "$PR_TITLE" \
                 --body ""
