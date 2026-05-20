@@ -1,0 +1,16 @@
+name: Sync Flue PR Reviews
+
+on:
+  workflow_dispatch:
+
+jobs:
+  sync-reviews:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Sync flue code reviews to dev repo issues
+        env:
+          GH_TOKEN: ${{ secrets.SYNC_PAT }}
+        run: bash .github/scripts/sync-flue-reviews.sh
