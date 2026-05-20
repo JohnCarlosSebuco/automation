@@ -65,6 +65,12 @@ for PR_B64 in $PRS; do
     continue
   fi
 
+  # Skip reviews with no blocking concerns (clean/tip-only reviews)
+  if echo "$FLUE_COMMENT_BODY" | grep -q "No blocking concerns found" && ! echo "$FLUE_COMMENT_BODY" | grep -qE '\*\*(CRITICAL|HIGH|MEDIUM|LOW)\*\*'; then
+    echo "Flue review has no blocking concerns. Skipping."
+    continue
+  fi
+
   # Version detection: find all "Code Review * - {branch}" issues
   SEARCH_PATTERN="Code Review"
   ALL_ISSUES=$(gh issue list --repo "$DEV_REPO" --state all --limit 100 --search "\"${SEARCH_PATTERN}\" in:title ${PR_BRANCH}" --json number,title,state,body --jq '.[]')
