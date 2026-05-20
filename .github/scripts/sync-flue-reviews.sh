@@ -4,7 +4,7 @@ set -euo pipefail
 UPSTREAM_REPO="axiononeproject/xcent-next"
 DEV_REPO="JohnCarlosSebuco/xcent-next-dev"
 AUTHOR="JohnCarlosSebuco"
-BOT_LOGIN="github-actions"
+BOT_LOGIN="github-actions[bot]"
 
 # Helper function: Calculate SHA-256 hash of flue comment content
 calculate_content_hash() {
