@@ -19,8 +19,8 @@ extract_metadata() {
   local issue_body="$1"
   local key="$2"
 
-  # Extract value from "KEY: value" pattern in metadata block
-  echo "$issue_body" | tr -d '\r' | grep -oP "(?<=^${key}: )[^\r]*" || echo ""
+  # Extract value from "KEY: value" pattern in metadata block (portable across BSD and GNU grep)
+  echo "$issue_body" | tr -d '\r' | grep "^${key}: " | sed "s/^${key}: //" | head -1 || echo ""
 }
 
 # List open PRs targeting staging or main authored by JohnCarlosSebuco
@@ -50,13 +50,13 @@ for PR_B64 in $PRS; do
   ALL_ISSUE_COMMENTS=$(gh api "repos/${UPSTREAM_REPO}/issues/${PR_NUMBER}/comments" --paginate \
     | jq -s "add // [] | [.[] | select(.user.login == \"${BOT_LOGIN}\")]")
 
-  # Find the Flue PR Review comment
+  # Find the most recent Flue PR Review comment
   FLUE_COMMENT_BODY=""
   while IFS= read -r ic; do
     IC_BODY=$(echo "$ic" | jq -r '.body')
     if echo "$IC_BODY" | grep -q 'Flue PR Review'; then
       FLUE_COMMENT_BODY="$IC_BODY"
-      break
+      # Don't break - keep updating to get the latest comment
     fi
   done < <(echo "$ALL_ISSUE_COMMENTS" | jq -c '.[]')
 
