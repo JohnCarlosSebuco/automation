@@ -8,10 +8,15 @@ BOT_LOGIN="macroscopeapp[bot]"
 
 # Helper function: Calculate SHA-256 hash of macroscope comment content
 calculate_content_hash() {
-  local comment_body="$1"
+  local inline_comments="$1"
+  local verdict_body="$2"
 
-  # Hash the comment body
-  echo -n "$comment_body" | sha256sum | awk '{print $1}'
+  # Sort inline comments deterministically by path, then line
+  local sorted_inline=$(echo "$inline_comments" | jq -S 'sort_by(.path, .line)')
+
+  # Concatenate all content and hash
+  local combined="${sorted_inline}${verdict_body}"
+  echo -n "$combined" | sha256sum | awk '{print $1}'
 }
 
 # Helper function: Extract metadata value from HTML comment
@@ -46,30 +51,37 @@ for PR_B64 in $PRS; do
   echo "=========="
   echo "Processing PR #${PR_NUMBER} (branch: ${PR_BRANCH} → ${PR_BASE})"
 
+  # Fetch ALL inline review comments with pagination
+  ALL_INLINE_COMMENTS_RAW=$(gh api "repos/${UPSTREAM_REPO}/pulls/${PR_NUMBER}/comments" --paginate \
+    | jq -s "add // [] | [.[] | select(.user.login == \"${BOT_LOGIN}\")]")
+  ALL_INLINE_COMMENTS=$(echo "$ALL_INLINE_COMMENTS_RAW" | jq 'map({path: .path, line: .line, body: .body})')
+
   # Fetch ALL issue comments with pagination
   ALL_ISSUE_COMMENTS=$(gh api "repos/${UPSTREAM_REPO}/issues/${PR_NUMBER}/comments" --paginate \
     | jq -s "add // [] | [.[] | select(.user.login == \"${BOT_LOGIN}\")]")
 
-  # Find the most recent Macroscope Approvability comment
-  MACROSCOPE_COMMENT_BODY=""
+  # Find the most recent Macroscope Approvability verdict comment
+  VERDICT_BODY=""
   while IFS= read -r ic; do
     IC_BODY=$(echo "$ic" | jq -r '.body')
     if echo "$IC_BODY" | grep -q 'Approvability'; then
-      MACROSCOPE_COMMENT_BODY="$IC_BODY"
+      VERDICT_BODY="$IC_BODY"
       # Don't break - keep updating to get the latest comment
     fi
   done < <(echo "$ALL_ISSUE_COMMENTS" | jq -c '.[]')
 
-  if [ -z "$MACROSCOPE_COMMENT_BODY" ]; then
-    echo "No Macroscope Approvability comment found for PR #${PR_NUMBER}. Skipping."
+  if [ -z "$VERDICT_BODY" ]; then
+    echo "No Macroscope Approvability verdict found for PR #${PR_NUMBER}. Skipping."
     continue
   fi
 
-  # Skip reviews that are Approved with no concerns
-  if echo "$MACROSCOPE_COMMENT_BODY" | grep -q "Verdict.*Approved" && ! echo "$MACROSCOPE_COMMENT_BODY" | grep -qE '\*\*(CRITICAL|HIGH|MEDIUM|LOW)\*\*'; then
-    echo "Macroscope review is Approved with no concerns. Skipping."
+  # Skip if Approved (no review comments with findings needed)
+  if echo "$VERDICT_BODY" | grep -q "Verdict.*Approved"; then
+    echo "Macroscope review is Approved. Skipping."
     continue
   fi
+
+  COMMENT_COUNT=$(echo "$ALL_INLINE_COMMENTS" | jq 'length')
 
   # Version detection: find all "Code Review * - {branch}" issues
   SEARCH_PATTERN="Code Review"
@@ -107,7 +119,7 @@ for PR_B64 in $PRS; do
     echo "Found existing version ${HIGHEST_VERSION} (issue #${LATEST_ISSUE_NUMBER}, ${LATEST_ISSUE_STATE})"
     echo "Previous content hash: ${LATEST_CONTENT_HASH}"
 
-    # Get the timestamp of the last sync and content hash from full API body (not truncated search result)
+    # Get the timestamp of the last sync and content hash from full API body
     ISSUE_BODY=$(gh api "repos/${DEV_REPO}/issues/${LATEST_ISSUE_NUMBER}" --jq '.body // ""')
     LATEST_SYNCED_AT=$(extract_metadata "$ISSUE_BODY" "SYNCED_AT")
     LATEST_CONTENT_HASH=$(extract_metadata "$ISSUE_BODY" "CONTENT_HASH")
@@ -119,8 +131,8 @@ for PR_B64 in $PRS; do
     echo "No existing versions found for branch ${PR_BRANCH}"
   fi
 
-  # Calculate content hash
-  CURRENT_HASH=$(calculate_content_hash "$MACROSCOPE_COMMENT_BODY")
+  # Calculate content hash using all inline comments and verdict
+  CURRENT_HASH=$(calculate_content_hash "$ALL_INLINE_COMMENTS" "$VERDICT_BODY")
   echo "Current content hash: ${CURRENT_HASH}"
 
   # Check if content changed
@@ -128,6 +140,14 @@ for PR_B64 in $PRS; do
     echo "Content unchanged from version ${HIGHEST_VERSION}. Skipping."
     continue
   fi
+
+  # Check if there are any comments to display
+  if [ "$COMMENT_COUNT" -eq 0 ]; then
+    echo "No macroscope inline comments found. Skipping."
+    continue
+  fi
+
+  echo "Found ${COMMENT_COUNT} inline comment(s) with verdict."
 
   # Calculate next version number
   NEXT_VERSION=$((HIGHEST_VERSION + 1))
@@ -144,22 +164,62 @@ for PR_B64 in $PRS; do
   METADATA="<!-- MACROSCOPE_METADATA
 PR_NUMBER: ${PR_NUMBER}
 CONTENT_HASH: ${CURRENT_HASH}
+INLINE_COMMENTS: ${COMMENT_COUNT}
 SYNCED_AT: ${SYNCED_AT}
 VERSION: ${NEXT_VERSION}
 -->"
 
-  # Create issue body with metadata + macroscope comment
-  ISSUE_BODY="${METADATA}
-
-${MACROSCOPE_COMMENT_BODY}"
-
-  # Create the issue
-  ISSUE_FILE=$(mktemp)
-  printf '%s\n' "$ISSUE_BODY" > "$ISSUE_FILE"
-  ISSUE_URL=$(gh issue create --repo "$DEV_REPO" --title "$ISSUE_TITLE" --body-file "$ISSUE_FILE")
+  # Create the issue with metadata
+  METADATA_FILE=$(mktemp)
+  printf '%s\n' "$METADATA" > "$METADATA_FILE"
+  ISSUE_URL=$(gh issue create --repo "$DEV_REPO" --title "$ISSUE_TITLE" --body-file "$METADATA_FILE")
   ISSUE_NUMBER=$(echo "$ISSUE_URL" | grep -o '[0-9]*$')
-  rm -f "$ISSUE_FILE"
+  rm -f "$METADATA_FILE"
   echo "Created issue #${ISSUE_NUMBER}: ${ISSUE_TITLE}"
+
+  # Post each inline comment as a separate issue comment
+  POSTED=0
+  while IFS= read -r comment; do
+    FILE_PATH=$(echo "$comment" | jq -r '.path')
+    LINE=$(echo "$comment" | jq -r '.line')
+    COMMENT_BODY=$(echo "$comment" | jq -r '.body')
+
+    HEADER="\`${FILE_PATH}\` (line ${LINE})"
+
+    COMMENT_FILE=$(mktemp)
+    printf '%s\n\n%s\n' "$HEADER" "$COMMENT_BODY" > "$COMMENT_FILE"
+
+    # Retry up to 3 times per comment
+    for ATTEMPT in 1 2 3; do
+      if gh issue comment "$ISSUE_NUMBER" --repo "$DEV_REPO" --body-file "$COMMENT_FILE"; then
+        POSTED=$((POSTED + 1))
+        break
+      fi
+      echo "Retry ${ATTEMPT}/3 for comment on ${FILE_PATH}..."
+      sleep $((ATTEMPT * 2))
+    done
+
+    rm -f "$COMMENT_FILE"
+    sleep 1
+  done < <(echo "$ALL_INLINE_COMMENTS" | jq -c '.[]')
+
+  # Post the verdict comment
+  VERDICT_FILE=$(mktemp)
+  printf '%s\n' "$VERDICT_BODY" > "$VERDICT_FILE"
+  for ATTEMPT in 1 2 3; do
+    if gh issue comment "$ISSUE_NUMBER" --repo "$DEV_REPO" --body-file "$VERDICT_FILE"; then
+      POSTED=$((POSTED + 1))
+      break
+    fi
+    echo "Retry ${ATTEMPT}/3 for verdict comment..."
+    sleep $((ATTEMPT * 2))
+  done
+  rm -f "$VERDICT_FILE"
+
+  echo "Posted ${POSTED}/${COMMENT_COUNT} inline comments + verdict to issue #${ISSUE_NUMBER}."
+  if [ "$POSTED" -lt $((COMMENT_COUNT + 1)) ]; then
+    echo "::warning::Only posted ${POSTED} of $((COMMENT_COUNT + 1)) comments for PR #${PR_NUMBER}."
+  fi
 
 done
 
