@@ -86,16 +86,21 @@ for PR_B64 in $PRS; do
 
   COMMENT_COUNT=$(echo "$ALL_INLINE_COMMENTS" | jq 'length')
 
-  # Extract previously synced error count if exists
+  # Calculate content hash of inline comments to detect if errors actually changed
+  CURRENT_HASH=$(calculate_content_hash "$ALL_INLINE_COMMENTS" "$SUMMARY_BODY")
+
+  # Extract previously synced values if exists
   PREV_ERROR_COUNT=0
+  PREV_HASH=""
   if [ "$HIGHEST_VERSION" -gt 0 ]; then
     ISSUE_BODY=$(gh api "repos/${DEV_REPO}/issues/${LATEST_ISSUE_NUMBER}" --jq '.body // ""')
     PREV_ERROR_COUNT=$(extract_metadata "$ISSUE_BODY" "ERROR_COUNT" || echo "0")
+    PREV_HASH=$(extract_metadata "$ISSUE_BODY" "CONTENT_HASH")
   fi
 
-  # Skip if error count hasn't changed
-  if [ "$HIGHEST_VERSION" -gt 0 ] && [ "$ERROR_COUNT" = "$PREV_ERROR_COUNT" ]; then
-    echo "Error count unchanged (${ERROR_COUNT} errors). Skipping."
+  # Skip only if both error count AND actual errors are unchanged
+  if [ "$HIGHEST_VERSION" -gt 0 ] && [ "$ERROR_COUNT" = "$PREV_ERROR_COUNT" ] && [ "$CURRENT_HASH" = "$PREV_HASH" ]; then
+    echo "Errors unchanged (${ERROR_COUNT} errors, same content). Skipping."
     continue
   fi
 
