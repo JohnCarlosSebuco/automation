@@ -141,6 +141,20 @@ for PR_B64 in $PRS; do
     continue
   fi
 
+  # Check cooldown: don't create new issue if last one was less than 1 hour ago
+  if [ -n "$LATEST_SYNCED_AT" ]; then
+    CURRENT_TIMESTAMP=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+    LAST_SYNC_EPOCH=$(date -d "$LATEST_SYNCED_AT" +%s 2>/dev/null || date -jf "%Y-%m-%dT%H:%M:%SZ" "$LATEST_SYNCED_AT" +%s 2>/dev/null || echo "0")
+    CURRENT_EPOCH=$(date -d "$CURRENT_TIMESTAMP" +%s 2>/dev/null || date -jf "%Y-%m-%dT%H:%M:%SZ" "$CURRENT_TIMESTAMP" +%s 2>/dev/null || echo "0")
+    DIFF_SECONDS=$((CURRENT_EPOCH - LAST_SYNC_EPOCH))
+    COOLDOWN_SECONDS=3600  # 1 hour
+
+    if [ "$DIFF_SECONDS" -lt "$COOLDOWN_SECONDS" ]; then
+      echo "Last sync was ${DIFF_SECONDS}s ago (cooldown: ${COOLDOWN_SECONDS}s). Skipping to prevent spam."
+      continue
+    fi
+  fi
+
   # Check if there are any comments to display
   if [ "$COMMENT_COUNT" -eq 0 ]; then
     echo "No macroscope inline comments found. Skipping."
