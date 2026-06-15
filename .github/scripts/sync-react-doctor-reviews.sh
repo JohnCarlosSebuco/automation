@@ -86,24 +86,6 @@ for PR_B64 in $PRS; do
 
   COMMENT_COUNT=$(echo "$ALL_INLINE_COMMENTS" | jq 'length')
 
-  # Calculate content hash of inline comments to detect if errors actually changed
-  CURRENT_HASH=$(calculate_content_hash "$ALL_INLINE_COMMENTS" "$SUMMARY_BODY")
-
-  # Extract previously synced values if exists
-  PREV_ERROR_COUNT=0
-  PREV_HASH=""
-  if [ "$HIGHEST_VERSION" -gt 0 ]; then
-    ISSUE_BODY=$(gh api "repos/${DEV_REPO}/issues/${LATEST_ISSUE_NUMBER}" --jq '.body // ""')
-    PREV_ERROR_COUNT=$(extract_metadata "$ISSUE_BODY" "ERROR_COUNT" || echo "0")
-    PREV_HASH=$(extract_metadata "$ISSUE_BODY" "CONTENT_HASH")
-  fi
-
-  # Skip only if both error count AND actual errors are unchanged
-  if [ "$HIGHEST_VERSION" -gt 0 ] && [ "$ERROR_COUNT" = "$PREV_ERROR_COUNT" ] && [ "$CURRENT_HASH" = "$PREV_HASH" ]; then
-    echo "Errors unchanged (${ERROR_COUNT} errors, same content). Skipping."
-    continue
-  fi
-
   # Version detection: find all "Code Review * - {branch}" issues
   SEARCH_PATTERN="Code Review"
   ALL_ISSUES=$(gh issue list --repo "$DEV_REPO" --state all --limit 100 --search "\"${SEARCH_PATTERN}\" in:title ${PR_BRANCH}" --json number,title,state,body --jq '.[]')
@@ -134,22 +116,34 @@ for PR_B64 in $PRS; do
     fi
   done < <(echo "$ALL_ISSUES" | jq -c '.')
 
-  # Extract last sync timestamp from metadata
+  # Calculate content hash of inline comments to detect if errors actually changed
+  CURRENT_HASH=$(calculate_content_hash "$ALL_INLINE_COMMENTS" "$SUMMARY_BODY")
+
+  # Extract last sync timestamp and metadata
   LATEST_SYNCED_AT=""
+  PREV_ERROR_COUNT=0
+  PREV_HASH=""
   if [ "$HIGHEST_VERSION" -gt 0 ]; then
     echo "Found existing version ${HIGHEST_VERSION} (issue #${LATEST_ISSUE_NUMBER}, ${LATEST_ISSUE_STATE})"
-    echo "Previous content hash: ${LATEST_CONTENT_HASH}"
 
     # Get the timestamp of the last sync and content hash from full API body
     ISSUE_BODY=$(gh api "repos/${DEV_REPO}/issues/${LATEST_ISSUE_NUMBER}" --jq '.body // ""')
     LATEST_SYNCED_AT=$(extract_metadata "$ISSUE_BODY" "SYNCED_AT")
     LATEST_CONTENT_HASH=$(extract_metadata "$ISSUE_BODY" "CONTENT_HASH")
+    PREV_ERROR_COUNT=$(extract_metadata "$ISSUE_BODY" "ERROR_COUNT" || echo "0")
+    PREV_HASH=$(extract_metadata "$ISSUE_BODY" "CONTENT_HASH")
 
     if [ -n "$LATEST_SYNCED_AT" ]; then
       echo "Last synced at: ${LATEST_SYNCED_AT}"
     fi
   else
     echo "No existing versions found for branch ${PR_BRANCH}"
+  fi
+
+  # Skip only if both error count AND actual errors are unchanged
+  if [ "$HIGHEST_VERSION" -gt 0 ] && [ "$ERROR_COUNT" = "$PREV_ERROR_COUNT" ] && [ "$CURRENT_HASH" = "$PREV_HASH" ]; then
+    echo "Errors unchanged (${ERROR_COUNT} errors, same content). Skipping."
+    continue
   fi
 
 
