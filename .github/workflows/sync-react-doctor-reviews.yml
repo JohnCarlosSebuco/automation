@@ -1,0 +1,16 @@
+name: Sync React Doctor Reviews
+
+on:
+  workflow_dispatch:
+
+jobs:
+  sync-reviews:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Sync react-doctor code reviews to dev repo issues
+        env:
+          GH_TOKEN: ${{ secrets.SYNC_PAT }}
+        run: bash .github/scripts/sync-react-doctor-reviews.sh
