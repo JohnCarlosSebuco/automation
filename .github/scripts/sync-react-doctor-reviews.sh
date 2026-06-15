@@ -86,6 +86,19 @@ for PR_B64 in $PRS; do
 
   COMMENT_COUNT=$(echo "$ALL_INLINE_COMMENTS" | jq 'length')
 
+  # Extract previously synced error count if exists
+  PREV_ERROR_COUNT=0
+  if [ "$HIGHEST_VERSION" -gt 0 ]; then
+    ISSUE_BODY=$(gh api "repos/${DEV_REPO}/issues/${LATEST_ISSUE_NUMBER}" --jq '.body // ""')
+    PREV_ERROR_COUNT=$(extract_metadata "$ISSUE_BODY" "ERROR_COUNT" || echo "0")
+  fi
+
+  # Skip if error count hasn't changed
+  if [ "$HIGHEST_VERSION" -gt 0 ] && [ "$ERROR_COUNT" = "$PREV_ERROR_COUNT" ]; then
+    echo "Error count unchanged (${ERROR_COUNT} errors). Skipping."
+    continue
+  fi
+
   # Version detection: find all "Code Review * - {branch}" issues
   SEARCH_PATTERN="Code Review"
   ALL_ISSUES=$(gh issue list --repo "$DEV_REPO" --state all --limit 100 --search "\"${SEARCH_PATTERN}\" in:title ${PR_BRANCH}" --json number,title,state,body --jq '.[]')
@@ -134,15 +147,6 @@ for PR_B64 in $PRS; do
     echo "No existing versions found for branch ${PR_BRANCH}"
   fi
 
-  # Calculate content hash using all inline comments and summary
-  CURRENT_HASH=$(calculate_content_hash "$ALL_INLINE_COMMENTS" "$SUMMARY_BODY")
-  echo "Current content hash: ${CURRENT_HASH}"
-
-  # Check if content changed
-  if [ -n "$LATEST_CONTENT_HASH" ] && [ "$CURRENT_HASH" = "$LATEST_CONTENT_HASH" ]; then
-    echo "Content unchanged from version ${HIGHEST_VERSION}. Skipping."
-    continue
-  fi
 
   # Check cooldown: don't create new issue if last one was less than 1 hour ago
   if [ -n "$LATEST_SYNCED_AT" ]; then
